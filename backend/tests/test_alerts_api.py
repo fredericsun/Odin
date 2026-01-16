@@ -1,24 +1,22 @@
-from datetime import date
-
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.db import get_engine, init_db
 from app.main import create_app
-from app.models import Report
+from app.models import Alert
 
 
-def test_reports_endpoint(monkeypatch, tmp_path):
-    db_path = tmp_path / "reports.db"
+def test_alerts_endpoint_reads_db(monkeypatch, tmp_path):
+    db_path = tmp_path / "alerts.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     engine = get_engine()
     init_db(engine)
     with Session(engine) as session:
-        session.add(Report(report_date=date(2026, 1, 16), subject="Daily", body="Hello"))
+        session.add(Alert(asset_id="t1", subject="S", body="B"))
         session.commit()
 
     app = create_app()
     client = TestClient(app)
-    resp = client.get("/api/reports")
+    resp = client.get("/api/alerts")
     assert resp.status_code == 200
-    assert resp.json()[0]["subject"] == "Daily"
+    assert resp.json()[0]["asset_id"] == "t1"
