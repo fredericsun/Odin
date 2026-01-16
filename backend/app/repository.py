@@ -1,6 +1,14 @@
 from sqlmodel import Session, select
 
-from app.models import Alert, MarketEvent, MarketSnapshot, Report, Settings
+from app.models import (
+    Alert,
+    Explanation,
+    InstrumentMapping,
+    MarketEvent,
+    MarketSnapshot,
+    Report,
+    Settings,
+)
 
 
 def get_settings(session: Session) -> Settings:
@@ -57,6 +65,34 @@ def save_alert(session: Session, payload: dict) -> Alert:
     session.commit()
     session.refresh(alert)
     return alert
+
+
+def save_explanation(session: Session, payload: dict) -> Explanation:
+    citations = payload.get("citations") or []
+    explanation = Explanation(
+        event_id=payload.get("event_id"),
+        summary=payload.get("summary", ""),
+        confidence=payload.get("confidence", 0.0),
+        citations=",".join(citations),
+    )
+    session.add(explanation)
+    session.commit()
+    session.refresh(explanation)
+    return explanation
+
+
+def save_instrument_mapping(session: Session, payload: dict) -> InstrumentMapping:
+    mapping = InstrumentMapping(
+        event_id=payload.get("event_id"),
+        instrument_type=payload.get("instrument_type", ""),
+        symbol=payload.get("symbol", ""),
+        rationale=payload.get("rationale", ""),
+        price_context=payload.get("price_context", ""),
+    )
+    session.add(mapping)
+    session.commit()
+    session.refresh(mapping)
+    return mapping
 
 
 def get_recent_alerts(session: Session, limit: int = 50) -> list[Alert]:
