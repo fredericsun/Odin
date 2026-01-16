@@ -1,18 +1,23 @@
+from sqlmodel import Session, select
+
+from app.db import get_engine, init_db
+from app.models import MarketEvent, MarketSnapshot
 from app.services.clob_ws_client import ClobWsClient
 from app.services.gamma_client import GammaClient
 from app.worker import run_once
 
 
-def test_run_once_returns_result(monkeypatch):
+def test_worker_persists_snapshots_and_events(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    engine = get_engine()
+    init_db(engine)
+
     def fake_fetch_markets(self, limit=50):
         return [{"id": "m1", "liquidity": 10, "clobTokenIds": ["t1"]}]
 
     class FakeWebSocket:
-        def __init__(self):
-            self.closed = False
-
         def close(self):
-            self.closed = True
+            return None
 
     def fake_connect(self):
         return FakeWebSocket()
@@ -29,8 +34,9 @@ def test_run_once_returns_result(monkeypatch):
     monkeypatch.setattr(ClobWsClient, "subscribe", fake_subscribe)
     monkeypatch.setattr(ClobWsClient, "iter_market_messages", fake_iter_messages)
 
-    result = run_once()
-    assert result["status"] == "ok"
-    assert result["markets_count"] == 1
-    assert result["token_ids_count"] == 1
+    result = run_once(engine=engine, max_messages=2)
     assert result["events_count"] == 1
+
+    with Session(engine) as session:
+        assert session.exec(select(MarketSnapshot)).all()
+        assert session.exec(select(MarketEvent)).all()
