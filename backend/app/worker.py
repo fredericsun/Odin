@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 from sqlmodel import Session
@@ -15,10 +16,12 @@ from app.services.clob_ws_client import ClobWsClient
 from app.services.decision_engine import score_and_gate
 from app.services.enrichment_pipeline import enrich_event
 from app.services.gamma_client import GammaClient
+from app.services.openai_client import OpenAIClient
 from app.services.polymarket_universe import (
     extract_clob_token_ids,
     select_top_markets_by_liquidity,
 )
+from app.services.public_sources import fetch_default_sources
 from app.services.signal_engine import RingBuffer, SignalEngine
 
 
@@ -81,13 +84,22 @@ def run_once(
             except Exception:
                 pass
 
-    sources = sources or []
     if llm_client is None:
-        class NullLLM:
-            def summarize(self, prompt: str) -> str:
-                return ""
+        if os.getenv("OPENAI_API_KEY"):
+            llm_client = OpenAIClient()
+            llm_enabled = True
+        else:
+            llm_enabled = False
 
-        llm_client = NullLLM()
+            class NullLLM:
+                def summarize(self, prompt: str) -> str:
+                    return ""
+
+            llm_client = NullLLM()
+    else:
+        llm_enabled = True
+
+    default_sources: Optional[list[dict]] = None
 
     engine = engine or get_engine()
     init_db(engine)
@@ -100,10 +112,35 @@ def run_once(
             current = event.get("current") or {}
             if "question" in current and "question" not in event:
                 event["question"] = current["question"]
-            explanation, mappings = enrich_event(event, llm_client, sources)
+            pre_score, pre_passes = score_and_gate(
+                {
+                    "odds": current.get("odds", 0.0),
+                    "volume": current.get("volume", 0.0),
+                    "liquidity": current.get("liquidity", 0.0),
+                    "llm_confidence": 0.0,
+                    "source_count": 0,
+                },
+                settings,
+            )
+            event["score"] = pre_score
+            if not pre_passes:
+                save_event(session, event)
+                continue
+
+            if llm_enabled:
+                if sources is None:
+                    if default_sources is None:
+                        default_sources = fetch_default_sources()
+                    sources_list = default_sources
+                else:
+                    sources_list = sources
+            else:
+                sources_list = []
+
+            explanation, mappings = enrich_event(event, llm_client, sources_list)
             event["llm_confidence"] = explanation.get("confidence", 0.0)
             event["source_count"] = len(explanation.get("citations", []))
-            score, passes = score_and_gate(
+            final_score, passes = score_and_gate(
                 {
                     "odds": current.get("odds", 0.0),
                     "volume": current.get("volume", 0.0),
@@ -113,7 +150,7 @@ def run_once(
                 },
                 settings,
             )
-            event["score"] = score
+            event["score"] = final_score
             record = save_event(session, event)
             save_explanation(session, {"event_id": record.id, **explanation})
             for mapping in mappings:
