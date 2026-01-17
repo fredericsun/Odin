@@ -46,6 +46,7 @@ def save_event(session: Session, payload: dict) -> MarketEvent:
         odds=current.get("odds", 0.0),
         volume=current.get("volume", 0.0),
         liquidity=current.get("liquidity", 0.0),
+        score=payload.get("score", 0.0),
     )
     session.add(event)
     session.commit()

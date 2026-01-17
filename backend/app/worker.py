@@ -3,9 +3,17 @@ from typing import Optional
 from sqlmodel import Session
 
 from app.db import get_engine, init_db
-from app.repository import get_settings, save_event, save_snapshot
+from app.repository import (
+    get_settings,
+    save_event,
+    save_explanation,
+    save_instrument_mapping,
+    save_snapshot,
+)
 from app.services.alert_pipeline import send_alerts_for_events
 from app.services.clob_ws_client import ClobWsClient
+from app.services.decision_engine import score_and_gate
+from app.services.enrichment_pipeline import enrich_event
 from app.services.gamma_client import GammaClient
 from app.services.polymarket_universe import (
     extract_clob_token_ids,
@@ -39,7 +47,12 @@ def process_market_stream(
     return events, snapshots
 
 
-def run_once(engine=None, max_messages: Optional[int] = 5) -> dict:
+def run_once(
+    engine=None,
+    max_messages: Optional[int] = 5,
+    llm_client=None,
+    sources=None,
+) -> dict:
     client = GammaClient()
     try:
         markets = client.fetch_markets(limit=50)
@@ -68,18 +81,58 @@ def run_once(engine=None, max_messages: Optional[int] = 5) -> dict:
             except Exception:
                 pass
 
+    sources = sources or []
+    if llm_client is None:
+        class NullLLM:
+            def summarize(self, prompt: str) -> str:
+                return ""
+
+        llm_client = NullLLM()
+
     engine = engine or get_engine()
     init_db(engine)
     with Session(engine) as session:
         settings = get_settings(session)
         for snapshot in snapshots:
             save_snapshot(session, snapshot)
-        event_records = []
+        passing_events: list[dict] = []
         for event in events:
-            event_records.append(save_event(session, event))
-        for event, record in zip(events, event_records):
-            event["event_id"] = record.id
-        send_alerts_for_events(session, settings, events, sender=_make_sender(settings))
+            current = event.get("current") or {}
+            if "question" in current and "question" not in event:
+                event["question"] = current["question"]
+            explanation, mappings = enrich_event(event, llm_client, sources)
+            event["llm_confidence"] = explanation.get("confidence", 0.0)
+            event["source_count"] = len(explanation.get("citations", []))
+            score, passes = score_and_gate(
+                {
+                    "odds": current.get("odds", 0.0),
+                    "volume": current.get("volume", 0.0),
+                    "liquidity": current.get("liquidity", 0.0),
+                    "llm_confidence": event["llm_confidence"],
+                    "source_count": event["source_count"],
+                },
+                settings,
+            )
+            event["score"] = score
+            record = save_event(session, event)
+            save_explanation(session, {"event_id": record.id, **explanation})
+            for mapping in mappings:
+                save_instrument_mapping(
+                    session,
+                    {
+                        "event_id": record.id,
+                        "instrument_type": mapping.get("type", ""),
+                        "symbol": mapping.get("symbol", ""),
+                        "rationale": mapping.get("rationale", ""),
+                        "price_context": mapping.get("price_context", ""),
+                    },
+                )
+            if passes:
+                event["event_id"] = record.id
+                passing_events.append(event)
+        send_alerts_for_events(
+            session, settings, passing_events, sender=_make_sender(settings)
+        )
 
     return {
         "status": "ok",
