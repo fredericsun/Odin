@@ -1,0 +1,17 @@
+DEFAULT_RSS_SOURCES = [
+    "https://feeds.reuters.com/reuters/worldNews",
+    "https://feeds.reuters.com/reuters/businessNews",
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    "https://www.theguardian.com/world/rss",
+    "https://feeds.npr.org/1001/rss.xml",
+    "https://www.sec.gov/news/pressreleases.rss",
+    "https://www.cftc.gov/RSS/PressReleases.xml",
+    "https://www.federalreserve.gov/feeds/press_all.xml",
+    "https://home.treasury.gov/rss/press-releases.xml",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://cointelegraph.com/rss",
+    "https://blog.coinbase.com/feed",
+    "https://www.binance.com/en/blog/rss",
+    "https://blog.kraken.com/feed",
+]
